@@ -175,11 +175,13 @@ class JiosaavnApi {
         if (kind != 'song' && kind != 'album' && kind != 'playlist') continue;
         final title = cleanText(resultMap['title'] ?? resultMap['song'] ?? resultMap['album'] ?? 'Untitled');
         final subtitle = cleanText(resultMap['subtitle'] ?? resultMap['primary_artists'] ?? resultMap['singers'] ?? '');
+        final image = resultMap['image'] as String?;
         supported.add(SearchResult(
           kind: kind,
           url: normalized,
           title: title,
           subtitle: subtitle,
+          image: image,
         ));
         if (supported.length >= limit) break;
       } on DownloadError {

@@ -398,7 +398,19 @@ class _DownloadScreenState extends State<DownloadScreen> {
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       ..._searchResults.map((result) => ListTile(
-                            leading: const Icon(Icons.music_note),
+                            leading: result.image != null && result.image!.isNotEmpty
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Image.network(
+                                      result.image!.replaceAll('150x150', '500x500'),
+                                      width: 48,
+                                      height: 48,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.music_note, size: 48),
+                                    ),
+                                  )
+                                : const Icon(Icons.music_note, size: 48),
                             title: Text(result.title),
                             subtitle: Text('${result.subtitle}  ·  ${result.kind}'),
                             trailing: ElevatedButton.icon(
@@ -430,20 +442,67 @@ class _DownloadScreenState extends State<DownloadScreen> {
                           p.status != DownloadStatus.completed &&
                           p.status != DownloadStatus.failed &&
                           p.status != DownloadStatus.skipped).map((progress) =>
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${progress.position}. ${progress.title}',
-                                  style: const TextStyle(fontWeight: FontWeight.w600)),
-                              const SizedBox(height: 4),
-                              LinearProgressIndicator(
-                                value: progress.percentage.clamp(0.0, 1.0),
+                              if (progress.coverUrl != null &&
+                                  progress.coverUrl!.isNotEmpty)
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    progress.coverUrl!
+                                        .replaceAll('150x150', '500x500'),
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(Icons.music_note, size: 48),
+                                  ),
+                                )
+                              else
+                                const SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: Icon(Icons.music_note, size: 48),
+                                ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${progress.position}. ${progress.title}',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w600),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (progress.statusText.isNotEmpty)
+                                          Text(
+                                            progress.statusText,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.blueGrey,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    LinearProgressIndicator(
+                                      value: progress.percentage.clamp(0.0, 1.0),
+                                    ),
+                                    Text(
+                                      '${_progressAmount(progress)}  ·  ${progress.speed}',
+                                      style: const TextStyle(
+                                          fontSize: 12, color: Colors.grey),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              Text(
-                                '${_progressAmount(progress)}  ·  ${progress.speed}',
-                                style: const TextStyle(fontSize: 12, color: Colors.grey),
-                              ),
-                              const SizedBox(height: 8),
                             ],
                           )),
                       if (_failures.isNotEmpty) ...[

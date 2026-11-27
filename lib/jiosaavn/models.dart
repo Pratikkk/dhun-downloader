@@ -189,12 +189,14 @@ class SearchResult {
   final String url;
   final String title;
   final String subtitle;
+  final String? image; // cover art URL
 
   SearchResult({
     required this.kind,
     required this.url,
     required this.title,
     required this.subtitle,
+    this.image,
   });
 }
 
@@ -204,6 +206,8 @@ class DownloadProgress {
   final int total;
   final String title;
   final String artists;
+  final String? coverUrl; // cover art URL for this track
+  final String statusText; // e.g. "Fetching metadata…", "Downloading…", "Embedding cover…"
   final int bytesReceived;
   final int? totalBytes;
   final double percentage; // 0.0 to 1.0
@@ -215,6 +219,8 @@ class DownloadProgress {
     required this.total,
     required this.title,
     required this.artists,
+    this.coverUrl,
+    this.statusText = '',
     this.bytesReceived = 0,
     this.totalBytes,
     this.percentage = 0.0,

@@ -43,11 +43,13 @@ class JiosaavnDownloader {
   // Progress callbacks.
   ProgressCallback? onProgress;
   TrackCallback? onTrackFinished;
+  void Function(String message)? onStatus;
   void Function(int downloaded, int skipped, int failed)? onAllFinished;
 
   // Active download tracking (for UI progress).
   final Map<int, String> _activeTitles = {};
   final Map<int, String> _activeAmount = {};
+  final Map<int, String> _activeCoverUrls = {};
 
   // Per-directory index of tagged song IDs: directory path -> {trackId: filePath}
   final Map<String, Map<String, String>> _folderIds = {};
@@ -235,7 +237,8 @@ class JiosaavnDownloader {
       p.join(directory.path, '$prefix$safeTitle$suffix'),
     );
 
-    _notifyTrackStarted(songPos, title);
+    final coverImageUrl = song['image'] as String?;
+    _notifyTrackStarted(songPos, title, coverUrl: coverImageUrl);
     _status('[$songPos/$totalTracks] $title — $artists');
 
     final trackId = cleanText(song['id'] ?? songId);
@@ -593,26 +596,34 @@ class JiosaavnDownloader {
     }
   }
 
-  void _notifyTrackStarted(int pos, String title) {
+  void _notifyTrackStarted(int pos, String title, {String? coverUrl}) {
     _activeTitles[pos] = title;
+    if (coverUrl != null) {
+      _activeCoverUrls[pos] = coverUrl;
+    }
     _notifyProgress(
       pos,
       title,
-      'Starting...',
+      'Fetching metadata…',
       0,
       null,
       0.0,
       '0.0MB/s',
       DownloadStatus.downloading,
+      coverUrl: coverUrl,
+      statusText: 'Fetching metadata…',
     );
   }
 
-  void _notifyTrackProgress(int pos, int done, int? total) {
+  void _notifyTrackProgress(int pos, int done, int? total, {String? coverUrl, String statusText = ''}) {
     final percentage = total != null && total > 0 ? done / total : 0.0;
     final amount = total != null && total > 0
         ? '${(done * 100 ~/ total).clamp(0, 100)}%'
         : '${(done / 1024 / 1024).toStringAsFixed(1)}MB';
     _activeAmount[pos] = amount;
+    if (coverUrl != null) {
+      _activeCoverUrls[pos] = coverUrl;
+    }
     _notifyProgress(
       pos,
       _activeTitles[pos] ?? '',
@@ -622,6 +633,8 @@ class JiosaavnDownloader {
       percentage,
       '',
       DownloadStatus.downloading,
+      coverUrl: coverUrl ?? _activeCoverUrls[pos],
+      statusText: statusText.isNotEmpty ? statusText : 'Downloading…',
     );
   }
 
@@ -640,7 +653,18 @@ class JiosaavnDownloader {
         : outcome == 'Skipped'
         ? DownloadStatus.skipped
         : DownloadStatus.failed;
-    _notifyProgress(pos, title, outcome, 0, total, 1.0, '', status);
+    _notifyProgress(
+      pos,
+      title,
+      outcome,
+      0,
+      total,
+      1.0,
+      '',
+      status,
+      coverUrl: _activeCoverUrls[pos],
+      statusText: outcome == 'Downloaded' ? 'Saved!' : (outcome == 'Skipped' ? 'Skipped' : 'Failed'),
+    );
     if (onTrackFinished != null) {
       onTrackFinished!(
         DownloadResult(
@@ -665,6 +689,8 @@ class JiosaavnDownloader {
       0.0,
       '',
       DownloadStatus.failed,
+      coverUrl: _activeCoverUrls[pos],
+      statusText: 'Failed',
     );
   }
 
@@ -676,8 +702,10 @@ class JiosaavnDownloader {
     int? total,
     double percentage,
     String speed,
-    DownloadStatus status,
-  ) {
+    DownloadStatus status, {
+    String? coverUrl,
+    String statusText = '',
+  }) {
     if (onProgress == null) return;
     onProgress!(
       DownloadProgress(
@@ -685,6 +713,8 @@ class JiosaavnDownloader {
         total: total ?? 0,
         title: title,
         artists: '',
+        coverUrl: coverUrl,
+        statusText: statusText,
         bytesReceived: done,
         totalBytes: total,
         percentage: percentage,
@@ -703,8 +733,12 @@ class JiosaavnDownloader {
           title: message,
           artists: '',
           status: DownloadStatus.downloading,
+          statusText: message,
         ),
       );
+    }
+    if (onStatus != null) {
+      onStatus!(message);
     }
   }
 
@@ -838,6 +872,18 @@ class JiosaavnDownloader {
       );
     }
 
+    _notifyProgress(
+      songPos,
+      _activeTitles[songPos] ?? '',
+      'Got audio URL',
+      0,
+      null,
+      0.0,
+      '0.0MB/s',
+      DownloadStatus.downloading,
+      coverUrl: _activeCoverUrls[songPos],
+      statusText: 'Got audio URL',
+    );
     // Prefetch cover and lyrics in parallel with download.
     final coverFuture = _fetchCover(song, directory);
     final lyricsFuture = _prefetchLyrics(song);
@@ -916,7 +962,13 @@ class JiosaavnDownloader {
         if (chunk.isNotEmpty) {
           sink.add(chunk);
           size += chunk.length;
-          _notifyTrackProgress(songPos, savedBefore + size, totalSize);
+          _notifyTrackProgress(
+            songPos,
+            savedBefore + size,
+            totalSize,
+            coverUrl: song['image'] as String?,
+            statusText: 'Downloading audio…',
+          );
 
           final maxSpeed = config.maxSpeed;
           if (maxSpeed != null && maxSpeed > 0) {
@@ -970,6 +1022,19 @@ class JiosaavnDownloader {
       songWithLyrics['lyrics_text'] = lyricsResult[1];
       songWithLyrics['lrc_text'] = lyricsResult[0];
     }
+
+    _notifyProgress(
+      songPos,
+      _activeTitles[songPos] ?? '',
+      'Embedding metadata & cover…',
+      0,
+      null,
+      0.0,
+      '0.0MB/s',
+      DownloadStatus.downloading,
+      coverUrl: _activeCoverUrls[songPos],
+      statusText: 'Embedding metadata & cover…',
+    );
 
     final tagResult = await tagMp4(
       filePath: partial.path,
