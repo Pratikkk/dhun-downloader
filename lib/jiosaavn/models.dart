@@ -204,6 +204,9 @@ class DownloadProgress {
   final String artists;
   final String? coverUrl; // cover art URL for this track
   final String statusText; // e.g. "Fetching metadata…", "Downloading…", "Embedding cover…"
+  final String metadataStatus; // e.g. "✓ Metadata embedded", "✗ Metadata not embedded"
+  final bool metadataEmbedded; // whether MP4 metadata was successfully embedded
+  final String? metadataError; // error message if embedding failed
   final int bytesReceived;
   final int? totalBytes;
   final double percentage; // 0.0 to 1.0
@@ -217,6 +220,9 @@ class DownloadProgress {
     required this.artists,
     this.coverUrl,
     this.statusText = '',
+    this.metadataStatus = '',
+    this.metadataEmbedded = false,
+    this.metadataError,
     this.bytesReceived = 0,
     this.totalBytes,
     this.percentage = 0.0,

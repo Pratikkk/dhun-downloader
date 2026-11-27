@@ -30,6 +30,310 @@ Mp4CoverFormat? detectCoverFormat(List<int> bytes) {
   return null;
 }
 
+/// Check if bytes start with an ftyp atom (MP4 container).
+bool _isMp4Container(List<int> bytes) {
+  if (bytes.length < 8) return false;
+  final type = String.fromCharCodes(bytes.sublist(4, 8));
+  return type == 'ftyp';
+}
+
+/// Build a full MP4 atom: header + version(1) + flags(3) + data.
+Uint8List _fullAtom(String type, int version, int flags, List<int> data) {
+  final payload = ByteData(8 + data.length);
+  payload.setUint8(0, version);
+  payload.setUint8(1, (flags >> 16) & 0xFF);
+  payload.setUint8(2, (flags >> 8) & 0xFF);
+  payload.setUint8(3, flags & 0xFF);
+  for (var i = 0; i < data.length; i++) {
+    payload.setUint8(8 + i, data[i]);
+  }
+  return Uint8List.fromList([...atomHeader(type, payload.lengthInBytes), ...payload.buffer.asUint8List()]);
+}
+
+/// Build an ftyp atom.
+Uint8List _buildFtyp() {
+  final brands = <int>[];
+  brands.addAll(utf8.encode('isom')); // major_brand
+  brands.addAll([0, 0, 0, 0]); // minor_version
+  for (final b in ['isom', 'iso2', 'mp41', 'mp42']) {
+    brands.addAll(utf8.encode(b)); // compatible_brands
+  }
+  return Uint8List.fromList([...atomHeader('ftyp', brands.length), ...brands]);
+}
+
+/// Build an mvhd (movie header) atom.
+Uint8List _buildMvhd(int timescale, int duration) {
+  final data = ByteData(4 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
+  var offset = 0;
+  data.setInt32(offset, 0, Endian.big); offset += 4; // creation_time
+  data.setInt32(offset, 0, Endian.big); offset += 4; // modification_time
+  data.setInt32(offset, timescale, Endian.big); offset += 4; // timescale
+  data.setInt32(offset, duration, Endian.big); offset += 4; // duration
+  data.setInt32(offset, 0x00010000, Endian.big); offset += 4; // rate = 1.0
+  data.setInt16(offset, 0x0100, Endian.big); offset += 2; // volume = 1.0
+  data.setInt16(offset, 0, Endian.big); offset += 2; // reserved
+  data.setInt32(offset, 0, Endian.big); offset += 4; // reserved
+  data.setInt32(offset, 0, Endian.big); offset += 4; // reserved
+  // matrix (9 int32)
+  data.setInt32(offset, 0x00010000, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0x00010000, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0x40000000, Endian.big); offset += 4;
+  // pre_defined (6 uint32 = 0)
+  for (var i = 0; i < 6; i++) { data.setInt32(offset, 0, Endian.big); offset += 4; }
+  return _fullAtom('mvhd', 0, 0, Uint8List.fromList(data.buffer.asUint8List().sublist(0, offset)));
+}
+
+/// Build a tkhd (track header) atom.
+Uint8List _buildTkhd(int trackId, int duration) {
+  final data = ByteData(4 + 4 + 4 + 4 + 2 + 2 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4);
+  var offset = 0;
+  data.setInt32(offset, 0, Endian.big); offset += 4; // creation_time
+  data.setInt32(offset, 0, Endian.big); offset += 4; // modification_time
+  data.setInt32(offset, trackId, Endian.big); offset += 4; // track_ID
+  data.setInt32(offset, 0, Endian.big); offset += 4; // reserved
+  data.setInt32(offset, duration, Endian.big); offset += 4; // duration
+  data.setInt32(offset, 0, Endian.big); offset += 4; // reserved
+  data.setInt16(offset, 0, Endian.big); offset += 2; // layer
+  data.setInt16(offset, 0, Endian.big); offset += 2; // alternate_group
+  data.setInt16(offset, 0x0100, Endian.big); offset += 2; // volume = 1.0
+  data.setInt16(offset, 0, Endian.big); offset += 2; // reserved
+  // matrix (9 int32)
+  data.setInt32(offset, 0x00010000, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0x00010000, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0, Endian.big); offset += 4;
+  data.setInt32(offset, 0x40000000, Endian.big); offset += 4;
+  data.setInt16(offset, 0, Endian.big); offset += 2; // width = 0
+  data.setInt16(offset, 0, Endian.big); offset += 2;
+  data.setInt16(offset, 0, Endian.big); offset += 2; // height = 0
+  data.setInt16(offset, 0, Endian.big); offset += 2;
+  return _fullAtom('tkhd', 0, 0x00000007, Uint8List.fromList(data.buffer.asUint8List().sublist(0, offset)));
+}
+
+/// Build an mdhd (media header) atom.
+Uint8List _buildMdhd(int timescale, int duration) {
+  final data = ByteData(4 + 4 + 4 + 4 + 2 + 2 + 2);
+  var offset = 0;
+  data.setInt32(offset, 0, Endian.big); offset += 4; // creation_time
+  data.setInt32(offset, 0, Endian.big); offset += 4; // modification_time
+  data.setInt32(offset, timescale, Endian.big); offset += 4; // timescale
+  data.setInt32(offset, duration, Endian.big); offset += 4; // duration
+  data.setInt16(offset, 0x556E, Endian.big); offset += 2; // language = 'und' (packed)
+  data.setInt16(offset, 0, Endian.big); offset += 2; // quality = 0
+  return _fullAtom('mdhd', 0, 0, Uint8List.fromList(data.buffer.asUint8List().sublist(0, offset)));
+}
+
+/// Build an hdlr (handler reference) atom.
+Uint8List _buildHdlr(String componentType, String componentSubtype, String name) {
+  final nameBytes = utf8.encode(name);
+  final data = ByteData(4 + 4 + 4 + 4 + 4 + nameBytes.length + 1);
+  var offset = 0;
+  data.setInt32(offset, 0, Endian.big); offset += 4; // component_type
+  data.setInt32(offset, 0, Endian.big); offset += 4; // component_subtype
+  data.setInt32(offset, 0, Endian.big); offset += 4; // component_manufacturer
+  data.setInt32(offset, 0, Endian.big); offset += 4; // component_flags
+  data.setInt32(offset, 0, Endian.big); offset += 4; // component_flags_mask
+  for (var i = 0; i < nameBytes.length; i++) {
+    data.setUint8(offset + i, nameBytes[i]);
+  }
+  offset += nameBytes.length;
+  data.setUint8(offset++, 0); // null terminator
+  return _fullAtom('hdlr', 0, 0, Uint8List.fromList(data.buffer.asUint8List().sublist(0, offset)));
+}
+
+/// Build a dref (data reference) atom inside dinf.
+Uint8List _buildDref() {
+  // Single url entry with self-reference flag
+  final entry = <int>[];
+  entry.addAll([0, 0, 0, 1]); // entry_size, entry_type='url '
+  entry.addAll(utf8.encode('url '));
+  entry.addAll([0x00, 0x00, 0x00, 0x01]); // flags = self-reference
+  final data = ByteData(4 + entry.length);
+  data.setInt32(0, entry.length, Endian.big); // entry_count = 1
+  for (var i = 0; i < entry.length; i++) {
+    data.setUint8(4 + i, entry[i]);
+  }
+  return _fullAtom('dref', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build a dinf (data information) atom.
+Uint8List _buildDinf() {
+  final dref = _buildDref();
+  // dinf contains dref
+  return Uint8List.fromList([...atomHeader('dinf', dref.length), ...dref]);
+}
+
+/// Build an stsd (sample description) atom for AAC.
+Uint8List _buildStsd(int sampleRate, int channels) {
+  // mp4a entry
+  final mp4aData = <int>[];
+  mp4aData.addAll([0, 0, 0, 0]); // reserved (6 bytes) - first 4
+  mp4aData.addAll([0, 0]); // reserved (2 bytes)
+  mp4aData.addAll([1, 0]); // data_reference_index
+  mp4aData.addAll([0, 0]); // version
+  mp4aData.addAll([0, 0]); // revision
+  mp4aData.addAll([0, 0, 0, 0]); // vendor
+  mp4aData.addAll([channels, 0]); // channel_count
+  mp4aData.addAll([16, 0]); // bits_per_sample = 16
+  mp4aData.addAll([0, 0]); // reserved
+  mp4aData.addAll([sampleRate >> 8, sampleRate & 0xFF]); // sample_rate (fixed point 16.16, but we store as integer>>8)
+  
+  // esds (Elementary Stream Descriptor)
+  final esds = <int>[];
+  // ES descriptor
+  esds.addAll([0x03, 0x11 + 17]); // tag=0x03, length
+  esds.addAll([0x00, 0x01]); // ES_ID
+  esds.addAll([0x00, 0x00]); // stream_priority, flags
+  // DecoderConfig descriptor
+  esds.addAll([0x04, 0x0F + 2]); // tag=0x04, length
+  esds.addAll([0x40]); // object_type_indication (AAC LC = 0x40)
+  esds.addAll([0xEC]); // stream_type=5 (audio), upstream=0, reserved
+  esds.addAll([0x00, 0x00, 0x00]); // buffer_size_db
+  esds.addAll([0x00, 0x1F, 0x40, 0x00]); // max_bitrate, avg_bitrate (approx)
+  // DecoderSpecificInfo
+  esds.addAll([0x05, 0x02]); // tag=0x05, length=2
+  // AAC specific config: sampling frequency index + channel configuration
+  int samplingIndex;
+  switch (sampleRate) {
+    case 96000: samplingIndex = 0; break;
+    case 88200: samplingIndex = 1; break;
+    case 64000: samplingIndex = 2; break;
+    case 48000: samplingIndex = 3; break;
+    case 44100: samplingIndex = 4; break;
+    case 32000: samplingIndex = 5; break;
+    case 24000: samplingIndex = 6; break;
+    case 22050: samplingIndex = 7; break;
+    case 16000: samplingIndex = 8; break;
+    case 12000: samplingIndex = 9; break;
+    case 11025: samplingIndex = 10; break;
+    case 8000: samplingIndex = 11; break;
+    default: samplingIndex = 4; break; // 44100
+  }
+  int configByte = (samplingIndex << 3) | (channels >> 1);
+  esds.addAll([configByte, (channels << 7) & 0xFF]);
+
+  final stsdData = <int>[];
+  stsdData.addAll(utf8.encode('mp4a')); // format
+  stsdData.addAll(mp4aData);
+  stsdData.addAll(esds);
+
+  final data = ByteData(4 + stsdData.length);
+  data.setInt32(0, 1, Endian.big); // entry_count = 1
+  for (var i = 0; i < stsdData.length; i++) {
+    data.setUint8(4 + i, stsdData[i]);
+  }
+  return _fullAtom('stsd', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build stts (time-to-sample) atom.
+Uint8List _buildStts(int sampleCount, int sampleDuration) {
+  final data = ByteData(4 + 8);
+  data.setInt32(0, 1, Endian.big); // entry_count
+  data.setInt32(4, sampleCount, Endian.big); // sample_count
+  data.setInt32(8, sampleDuration, Endian.big); // sample_duration
+  return _fullAtom('stts', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build stsc (sample-to-chunk) atom.
+Uint8List _buildStsc() {
+  final data = ByteData(4 + 12);
+  data.setInt32(0, 1, Endian.big); // entry_count
+  data.setInt32(4, 1, Endian.big); // first_chunk
+  data.setInt32(8, 1, Endian.big); // samples_per_chunk
+  data.setInt32(12, 1, Endian.big); // sample_description_id
+  return _fullAtom('stsc', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build stsz (sample size) atom.
+Uint8List _buildStsz(int sampleSize) {
+  final data = ByteData(4 + 4 + 4);
+  data.setInt32(0, sampleSize, Endian.big); // sample_size (0 = variable)
+  data.setInt32(4, 1, Endian.big); // sample_count
+  data.setInt32(8, sampleSize, Endian.big); // first entry
+  return _fullAtom('stsz', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build stco (chunk offset) atom.
+Uint8List _buildStco(int offset) {
+  final data = ByteData(4 + 4);
+  data.setInt32(0, 1, Endian.big); // entry_count
+  data.setInt32(4, offset, Endian.big); // chunk_offset
+  return _fullAtom('stco', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
+}
+
+/// Build an ilst (item list) atom - empty container for metadata.
+Uint8List _buildIlst() {
+  return atomHeader('ilst', 0);
+}
+
+/// Build a meta atom.
+Uint8List _buildMeta(List<int> ilstData) {
+  final data = <int>[];
+  data.addAll([0, 0, 0, 0]); // version + flags
+  data.addAll(utf8.encode('und')); // handler_type
+  data.addAll(ilstData);
+  return _fullAtom('meta', 0, 0, Uint8List.fromList(data));
+}
+
+/// Build an udta atom containing meta.
+Uint8List _buildUdta(List<int> metaData) {
+  return Uint8List.fromList([...atomHeader('udta', metaData.length), ...metaData]);
+}
+
+/// Build an mdat atom with the given data.
+Uint8List _buildMdat(List<int> data) {
+  return Uint8List.fromList([...atomHeader('mdat', data.length), ...data]);
+}
+
+/// Build a trak atom containing tkhd + mdia.
+Uint8List _buildTrak(int trackId, int duration, int timescale, int sampleRate,
+    int channels, int mdatOffset, int aacSize) {
+  final tkhd = _buildTkhd(trackId, duration);
+  
+  final stsd = _buildStsd(sampleRate, channels);
+  final stts = _buildStts(1, duration); // 1 sample, duration in media timescale units
+  final stsc = _buildStsc();
+  final stsz = _buildStsz(aacSize);
+  final stco = _buildStco(mdatOffset);
+  
+  // Build stbl: stsd + stts + stsc + stsz + stco
+  final stblParts = <Uint8List>[stsd, stts, stsc, stsz, stco];
+  var stblSize = 8;
+  for (final p in stblParts) stblSize += p.length;
+  final stbl = Uint8List.fromList([...atomHeader('stbl', stblSize - 8), ...stblParts.expand((a) => a)]);
+  
+  final mdhd = _buildMdhd(timescale, duration);
+  final hdlr = _buildHdlr('soun', 'mp4a', 'SoundHandler');
+  final dinf = _buildDinf();
+  
+  // Build mdia: mdhd + hdlr + minf + dinf
+  final minfParts = <Uint8List>[dinf, stbl];
+  var minfSize = 8;
+  for (final p in minfParts) minfSize += p.length;
+  final minf = Uint8List.fromList([...atomHeader('minf', minfSize - 8), ...minfParts.expand((a) => a)]);
+  
+  final mdiaParts = <Uint8List>[mdhd, hdlr, minf];
+  var mdiaSize = 8;
+  for (final p in mdiaParts) mdiaSize += p.length;
+  final mdia = Uint8List.fromList([...atomHeader('mdia', mdiaSize - 8), ...mdiaParts.expand((a) => a)]);
+  
+  // Build trak: tkhd + mdia
+  final trakParts = <Uint8List>[tkhd, mdia];
+  var trakSize = 8;
+  for (final p in trakParts) trakSize += p.length;
+  return Uint8List.fromList([...atomHeader('trak', trakSize - 8), ...trakParts.expand((a) => a)]);
+}
+
 /// Write an MP4 atom header: `[size(4, big-endian)][type(4)]`.
 Uint8List atomHeader(String type, int dataSize) {
   final size = 8 + dataSize;
@@ -65,7 +369,7 @@ Uint8List metadataPayload(List<int> data) {
 /// `[atom header][version(1)][flags(3)][language(4)][data]`.
 Uint8List dataAtom(String type, List<int> data) {
   final payload = metadataPayload(data);
-  return Uint8List.fromList([...atomHeader(type, payload.length), ...payload]);
+  return Uint8List.fromList([...atomHeader(type, payload.lengthInBytes), ...payload.buffer.asUint8List()]);
 }
 
 /// Build a track number atom `trkn`: `[(track, total)]`.
@@ -263,31 +567,19 @@ Future<TagResult> tagMp4({
     }
     final bytes = await file.readAsBytes();
 
-    final topLevel = Mp4Atom.readTopLevel(bytes);
-    final moov = Mp4Atom.findByType(topLevel, 'moov');
-    if (moov == null) {
-      return TagResult(success: false, error: 'No moov atom found (not a valid MP4)');
-    }
-
-    final moovBytes = Uint8List.fromList(bytes.sublist(moov.dataOffset, moov.dataOffset + moov.dataSize));
-    final moovAtoms = Mp4Atom.readTopLevel(moovBytes);
-    final udta = Mp4Atom.findByType(moovAtoms, 'udta');
-    if (udta == null) {
-      return TagResult(success: false, error: 'No udta atom found');
-    }
-
-    final udtaBytes = Uint8List.fromList(bytes.sublist(udta.dataOffset, udta.dataOffset + udta.dataSize));
-    final udtaAtoms = Mp4Atom.readTopLevel(udtaBytes);
-    final meta = Mp4Atom.findByType(udtaAtoms, 'meta');
-    if (meta == null) {
-      return TagResult(success: false, error: 'No meta atom found');
-    }
-
-    final metaBytes = Uint8List.fromList(bytes.sublist(meta.dataOffset, meta.dataOffset + meta.dataSize));
-    final metaAtoms = Mp4Atom.readTopLevel(metaBytes);
-    final ilst = Mp4Atom.findByType(metaAtoms, 'ilst');
-    if (ilst == null) {
-      return TagResult(success: false, error: 'No ilst atom found');
+    // Extract audio data from the file
+    List<int> audioData;
+    if (_isMp4Container(bytes)) {
+      // File is MP4 container - extract mdat audio data
+      final topLevel = Mp4Atom.readTopLevel(bytes);
+      final mdat = Mp4Atom.findByType(topLevel, 'mdat');
+      if (mdat == null) {
+        return TagResult(success: false, error: 'No mdat atom found (no audio data)');
+      }
+      audioData = Uint8List.fromList(bytes.sublist(mdat.dataOffset, mdat.dataOffset + mdat.dataSize));
+    } else {
+      // Raw AAC audio
+      audioData = bytes;
     }
 
     // Build all metadata atoms.
@@ -336,13 +628,9 @@ Future<TagResult> tagMp4({
 
     // Disc number
     final discNumber = song['disc_number'] ?? song['disc'];
-    final totalDiscs = song['total_discs'];
     if (discNumber != null && discNumber != '' && discNumber != 0) {
       final discNum = discNumber is int ? discNumber : int.tryParse(discNumber.toString()) ?? 1;
-      final total = totalDiscs != null && totalDiscs != '' && totalDiscs != 0
-          ? (totalDiscs is int ? totalDiscs : int.tryParse(totalDiscs.toString()) ?? 1)
-          : 1;
-      newMetadataAtoms.add(diskAtom(discNum, total));
+      newMetadataAtoms.add(diskAtom(discNum, 1));
     }
 
     // Explicit rating
@@ -455,145 +743,81 @@ Future<TagResult> tagMp4({
       }
     }
 
-    // If nothing to write, done.
-    if (newMetadataAtoms.isEmpty) {
-      return TagResult(success: true);
-    }
+    // Calculate duration in milliseconds for MP4
+    final durationMs = song['duration'] != null
+        ? ((song['duration'] is int ? song['duration'] : int.tryParse(song['duration'].toString()) ?? 0) * 1000)
+        : 0;
 
-    // Build new ilst atom content.
-    // Read existing ilst atoms, keep non-data atoms, replace data atoms with our new ones.
-    final ilstBytes = Uint8List.fromList(bytes.sublist(ilst.dataOffset, ilst.dataOffset + ilst.dataSize));
-    final ilstAtoms = Mp4Atom.readTopLevel(ilstBytes);
+    // Build complete MP4: ftyp + moov + mdat
+    final ftyp = _buildFtyp();
 
-    final newIlstContent = <Uint8List>[];
-    for (final child in ilstAtoms) {
-      // Skip existing data atoms; we'll replace them all.
-      final type = child.type;
-      if (type == '\xa9nam' || type == '\xa9alb' || type == '\xa9ART' || type == '\xa9day' ||
-          type == '\xa9gen' || type == 'trkn' || type == 'rtng' || type == '----' ||
-          type == '\xa9wrt' || type == '\xa9lyr' || type == 'covr' || type == 'disk' ||
-          type == 'cpil') {
-        continue; // replaced by new atoms
-      }
-      newIlstContent.add(
-        ilstBytes.sublist(child.offset - ilst.dataOffset, child.offset - ilst.dataOffset + child.size),
-      );
+    // Build ilst with metadata
+    var ilstSize = 8;
+    for (final a in newMetadataAtoms) {
+      ilstSize += a.length;
     }
-    newIlstContent.addAll(newMetadataAtoms);
-
-    // Build new ilst atom.
-    var newIlstSize = 8;
-    for (final a in newIlstContent) {
-      newIlstSize += a.length;
-    }
-    final newIlstBytes = Uint8List.fromList([
-      ...atomHeader('ilst', newIlstSize - 8),
-      ...newIlstContent.expand((a) => a),
+    final ilst = Uint8List.fromList([
+      ...atomHeader('ilst', ilstSize - 8),
+      ...newMetadataAtoms.expand((a) => a),
     ]);
 
-    // Reconstruct meta atom: replace old ilst with new one.
-    final newMetaContent = <Uint8List>[];
-    var ilstReplaced = false;
-    for (final child in metaAtoms) {
-      if (child.type == 'ilst') {
-        newMetaContent.add(newIlstBytes);
-        ilstReplaced = true;
-      } else {
-        newMetaContent.add(
-          metaBytes.sublist(child.offset - meta.dataOffset, child.offset - meta.dataOffset + child.size),
-        );
-      }
-    }
-    if (!ilstReplaced) {
-      newMetaContent.add(newIlstBytes);
-    }
-
-    var newMetaSize = 8;
-    for (final a in newMetaContent) {
-      newMetaSize += a.length;
-    }
-    final newMetaBytes = Uint8List.fromList([
-      ...atomHeader('meta', newMetaSize - 8),
-      ...newMetaContent.expand((a) => a),
+    // Build meta
+    final metaData = <int>[];
+    metaData.addAll([0, 0, 0, 0]); // version + flags
+    metaData.addAll(utf8.encode('und')); // handler_type
+    metaData.addAll(ilst);
+    final metaSize = 8 + metaData.length;
+    final meta = Uint8List.fromList([
+      ...atomHeader('meta', metaSize - 8),
+      ...metaData,
     ]);
 
-    // Reconstruct udta atom: replace old meta with new one.
-    final newUdtaContent = <Uint8List>[];
-    var metaReplaced = false;
-    for (final child in udtaAtoms) {
-      if (child.type == 'meta') {
-        newUdtaContent.add(newMetaBytes);
-        metaReplaced = true;
-      } else {
-        newUdtaContent.add(
-          udtaBytes.sublist(child.offset - udta.dataOffset, child.offset - udta.dataOffset + child.size),
-        );
-      }
-    }
-    if (!metaReplaced) {
-      newUdtaContent.add(newMetaBytes);
-    }
-
-    var newUdtaSize = 8;
-    for (final a in newUdtaContent) {
-      newUdtaSize += a.length;
-    }
-    final newUdtaBytes = Uint8List.fromList([
-      ...atomHeader('udta', newUdtaSize - 8),
-      ...newUdtaContent.expand((a) => a),
+    // Build udta
+    final udtaSize = 8 + meta.length;
+    final udta = Uint8List.fromList([
+      ...atomHeader('udta', udtaSize - 8),
+      ...meta,
     ]);
 
-    // Reconstruct moov atom: replace old udta with new one.
-    final newMoovContent = <Uint8List>[];
-    var udtaReplaced = false;
-    for (final child in moovAtoms) {
-      if (child.type == 'udta') {
-        newMoovContent.add(newUdtaBytes);
-        udtaReplaced = true;
-      } else {
-        newMoovContent.add(
-          moovBytes.sublist(child.offset - moov.dataOffset, child.offset - moov.dataOffset + child.size),
-        );
-      }
-    }
-    if (!udtaReplaced) {
-      newMoovContent.add(newUdtaBytes);
-    }
+    // Build mvhd
+    final mvhd = _buildMvhd(1000, durationMs);
 
-    var newMoovSize = 8;
-    for (final a in newMoovContent) {
-      newMoovSize += a.length;
-    }
-    final newMoovBytes = Uint8List.fromList([
-      ...atomHeader('moov', newMoovSize - 8),
-      ...newMoovContent.expand((a) => a),
+    // Build trak
+    final trak = _buildTrak(1, durationMs, 1000, 44100, 2, ftyp.length + 8 /* moov size will be calculated below */, audioData.length);
+    // Note: mdat offset in trak.stco needs to be after moov. We'll fix this below.
+
+    // Build moov: mvhd + trak + udta
+    final moovParts = <Uint8List>[mvhd, trak, udta];
+    var moovSize = 8;
+    for (final p in moovParts) moovSize += p.length;
+    final moov = Uint8List.fromList([
+      ...atomHeader('moov', moovSize - 8),
+      ...moovParts.expand((a) => a),
     ]);
 
-    // Reconstruct the full file: replace old moov with new moov.
-    final newFileBytes = <int>[];
-    var moovWritten = false;
-    for (final atom in topLevel) {
-      if (atom.type == 'moov') {
-        newFileBytes.addAll(newMoovBytes);
-        moovWritten = true;
-      } else {
-        newFileBytes.addAll(bytes.sublist(atom.offset, atom.offset + atom.size));
-      }
-    }
-    if (!moovWritten) {
-      newFileBytes.addAll(newMoovBytes);
-    }
+    // The mdat offset = ftyp + moov
+    final mdatOffset = ftyp.length + moov.length;
 
-    // Append any data after moov (e.g., mdat, free).
-    final moovAtom = Mp4Atom.findByType(topLevel, 'moov');
-    if (moovAtom != null) {
-      final afterMoov = moovAtom.offset + moovAtom.size;
-      if (afterMoov < bytes.length) {
-        newFileBytes.addAll(bytes.sublist(afterMoov));
-      }
-    }
+    // Rebuild trak with correct mdat offset
+    final trakFixed = _buildTrak(1, durationMs, 1000, 44100, 2, mdatOffset, audioData.length);
+    final moovPartsFixed = <Uint8List>[mvhd, trakFixed, udta];
+    var moovSizeFixed = 8;
+    for (final p in moovPartsFixed) moovSizeFixed += p.length;
+    final moovFixed = Uint8List.fromList([
+      ...atomHeader('moov', moovSizeFixed - 8),
+      ...moovPartsFixed.expand((a) => a),
+    ]);
 
-    await file.writeAsBytes(Uint8List.fromList(newFileBytes));
+    // Build mdat
+    final mdat = Uint8List.fromList([
+      ...atomHeader('mdat', audioData.length),
+      ...audioData,
+    ]);
+
+    // Write complete MP4: ftyp + moov + mdat
+    final result = Uint8List.fromList([...ftyp, ...moovFixed, ...mdat]);
+    await file.writeAsBytes(result);
+
     return TagResult(success: true);
   } catch (exc) {
     return TagResult(success: false, error: exc.toString());

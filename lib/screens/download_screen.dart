@@ -439,7 +439,6 @@ class _DownloadScreenState extends State<DownloadScreen> {
                           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
                       ..._progressList.where((p) =>
-                          p.status != DownloadStatus.completed &&
                           p.status != DownloadStatus.failed &&
                           p.status != DownloadStatus.skipped).map((progress) =>
                           Row(
@@ -491,6 +490,30 @@ class _DownloadScreenState extends State<DownloadScreen> {
                                           ),
                                       ],
                                     ),
+                                    if (progress.status == DownloadStatus.completed)
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            progress.metadataEmbedded
+                                                ? Icons.check_circle
+                                                : Icons.error,
+                                            size: 16,
+                                            color: progress.metadataEmbedded
+                                                ? Colors.green
+                                                : Colors.red,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            progress.metadataEmbedded
+                                                ? 'Metadata embedded'
+                                                : 'Metadata not embedded: ${progress.metadataError ?? 'unknown error'}',
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     const SizedBox(height: 4),
                                     LinearProgressIndicator(
                                       value: progress.percentage.clamp(0.0, 1.0),

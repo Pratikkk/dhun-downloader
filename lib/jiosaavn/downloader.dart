@@ -50,6 +50,8 @@ class JiosaavnDownloader {
   final Map<int, String> _activeTitles = {};
   final Map<int, String> _activeAmount = {};
   final Map<int, String> _activeCoverUrls = {};
+  final Map<int, bool> _metadataEmbedded = {};
+  final Map<int, String?> _metadataErrors = {};
 
   // Per-directory index of tagged song IDs: directory path -> {trackId: filePath}
   final Map<String, Map<String, String>> _folderIds = {};
@@ -181,6 +183,7 @@ class JiosaavnDownloader {
         title.isNotEmpty ? title : songId,
         (cleanText(song['primary_artists'])).isNotEmpty ? cleanText(song['primary_artists']) : 'Unknown Artist',
         'Skipped',
+        metadataEmbedded: false,
       );
       return;
     }
@@ -202,6 +205,7 @@ class JiosaavnDownloader {
             title.isNotEmpty ? title : songId,
             (cleanText(song['primary_artists'])).isNotEmpty ? cleanText(song['primary_artists']) : 'Unknown Artist',
             'Skipped',
+            metadataEmbedded: false,
           );
           return;
         }
@@ -217,6 +221,7 @@ class JiosaavnDownloader {
             title.isNotEmpty ? title : songId,
             (cleanText(song['primary_artists'])).isNotEmpty ? cleanText(song['primary_artists']) : 'Unknown Artist',
             'Skipped',
+            metadataEmbedded: false,
           );
           return;
         }
@@ -253,7 +258,8 @@ class JiosaavnDownloader {
     if (existing['found'] as bool) {
       skipped++;
       _status('  Skipped (song ID already exists; use overwrite to replace).');
-      _notifyTrackFinished(songPos, totalTracks, title, artists, 'Skipped');
+      _notifyTrackFinished(songPos, totalTracks, title, artists, 'Skipped',
+          metadataEmbedded: false);
       return;
     }
 
@@ -280,6 +286,8 @@ class JiosaavnDownloader {
       artists,
       'Downloaded',
       filePath: destination.path,
+      metadataEmbedded: _metadataEmbedded[songPos] ?? false,
+      metadataError: _metadataErrors[songPos],
     );
   }
 
@@ -645,6 +653,8 @@ class JiosaavnDownloader {
     String artists,
     String outcome, {
     String? filePath,
+    bool metadataEmbedded = false,
+    String? metadataError,
   }) {
     _activeTitles.remove(pos);
     _activeAmount.remove(pos);
@@ -664,6 +674,8 @@ class JiosaavnDownloader {
       status,
       coverUrl: _activeCoverUrls[pos],
       statusText: outcome == 'Downloaded' ? 'Saved!' : (outcome == 'Skipped' ? 'Skipped' : 'Failed'),
+      metadataEmbedded: metadataEmbedded,
+      metadataError: metadataError,
     );
     if (onTrackFinished != null) {
       onTrackFinished!(
@@ -705,6 +717,8 @@ class JiosaavnDownloader {
     DownloadStatus status, {
     String? coverUrl,
     String statusText = '',
+    bool metadataEmbedded = false,
+    String? metadataError,
   }) {
     if (onProgress == null) return;
     onProgress!(
@@ -715,6 +729,8 @@ class JiosaavnDownloader {
         artists: '',
         coverUrl: coverUrl,
         statusText: statusText,
+        metadataEmbedded: metadataEmbedded,
+        metadataError: metadataError,
         bytesReceived: done,
         totalBytes: total,
         percentage: percentage,
@@ -1046,11 +1062,19 @@ class JiosaavnDownloader {
       songId: songId,
     );
 
+    _metadataEmbedded[songPos] = tagResult.success;
+    _metadataErrors[songPos] = tagResult.error;
+
     if (!tagResult.success) {
-      _status('  Warning: tagging failed: ${tagResult.error}');
+      _status('  Warning: MP4 tagging failed: ${tagResult.error}');
+    } else {
+      _status('  MP4 metadata & cover embedded.', verbose: true);
     }
 
-    // Write sidecar JSON with ALL available metadata.
+    await partial.rename(destination.path);
+    await _discardPartials(destination);
+
+    // Write sidecar JSON with ALL available metadata (after rename so file exists).
     final sidecarResult = await writeSidecarJson(
       audioFilePath: destination.path,
       song: songWithLyrics,
@@ -1065,9 +1089,6 @@ class JiosaavnDownloader {
     } else {
       _status('  Saved metadata sidecar: ${p.basename(sidecarResult)}', verbose: true);
     }
-
-    await partial.rename(destination.path);
-    await _discardPartials(destination);
 
     _folderIds.putIfAbsent(directory.path, () => {})[trackId] =
         destination.path;
