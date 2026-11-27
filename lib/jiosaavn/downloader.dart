@@ -61,7 +61,17 @@ class JiosaavnDownloader {
     required this.config,
     Directory? outputDir,
     this.debug = false,
-  }) : outputDir = outputDir ?? Directory(config.output);
+  }) : outputDir = outputDir ?? _defaultOutputDir(config.output);
+
+  static Directory _defaultOutputDir(String outputPath) {
+    // If the path is relative or not writable (e.g., sandboxed macOS), use
+    // the app documents directory which is always writable.
+    final dir = Directory(outputPath);
+    if (!dir.isAbsolute) {
+      return Directory(p.join(Directory.current.path, outputPath));
+    }
+    return dir;
+  }
 
   /// Enable/disable debug logging.
   final bool debug;

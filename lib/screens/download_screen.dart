@@ -3,7 +3,10 @@
 /// Provides a Flutter UI to search JioSaavn, browse results, and download
 /// songs/albums/playlists with progress tracking.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../jiosaavn/api.dart';
 import '../jiosaavn/client.dart';
@@ -57,11 +60,23 @@ class _DownloadScreenState extends State<DownloadScreen> {
       prefetchRate: config.prefetchRate,
       prefetchBurst: config.prefetchBurst,
     );
+
+    // Resolve output directory using path_provider for sandbox compatibility.
+    // Application documents directory is always writable within the macOS
+    // app sandbox; downloads directory may not be.
+    Directory outputDir;
+    try {
+      outputDir = await getApplicationDocumentsDirectory();
+    } catch (_) {
+      outputDir = Directory.current;
+    }
+
     if (!mounted) return;
     setState(() {
       _downloader = JiosaavnDownloader(
         api: api,
         config: config,
+        outputDir: outputDir,
       )
         ..onProgress = _onProgress
         ..onTrackFinished = _onTrackFinished
