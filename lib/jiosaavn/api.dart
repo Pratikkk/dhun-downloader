@@ -170,7 +170,8 @@ class JiosaavnApi {
   /// Get a CDN URL for a track's encrypted media URL, with optional quality fallback.
   ///
   /// Returns the resolved direct audio URL.
-  Future<String> getCdnUrl(String encUrl, {List<String>? fallbackQualities}) async {
+  Future<String> getCdnUrl(String encUrl, {String? quality, List<String>? fallbackQualities}) async {
+    final requestedQuality = quality ?? '320';
     final qualities = <String>{};
     final ordered = <String>[];
     void addQuality(String q) {
@@ -179,9 +180,7 @@ class JiosaavnApi {
         ordered.add(q);
       }
     }
-    addQuality(client.timeoutSeconds > 0 ? '320' : '320'); // placeholder, replaced below
-    // Use the configured quality from downloader instead; here we default to 320.
-    addQuality('320');
+    addQuality(requestedQuality);
     if (fallbackQualities != null) {
       for (final q in fallbackQualities) addQuality(q);
     }
@@ -193,11 +192,11 @@ class JiosaavnApi {
     }
 
     String? lastError;
-    for (final quality in ordered) {
+    for (final q in ordered) {
       try {
         final data = await api('song.generateAuthToken', params: {
           'url': encUrl,
-          'bitrate': quality,
+          'bitrate': q,
           'api_version': '4',
         });
         var authUrl = data['auth_url'];
@@ -220,10 +219,7 @@ class JiosaavnApi {
         }
         final resolved = uri.replace(host: host).toString();
 
-        _cdnUrlCache[cacheKey] = {'url': resolved, 'quality': quality};
-        if (quality != '320') {
-          // Fallback warning would go here via callback
-        }
+        _cdnUrlCache[cacheKey] = {'url': resolved, 'quality': q};
         return resolved;
       } on DownloadError catch (exc) {
         lastError = exc.message;
@@ -235,7 +231,7 @@ class JiosaavnApi {
       }
     }
     throw DownloadError(
-        'No audio URL available at any quality (tried: ${ordered.join(', ')}). Last error: $lastError');
+        'No audio URL available at any quality (tried: ${ordered.join(', ')}). Last error: ${lastError ?? 'unknown'}');
   }
 
   /// Fetch all albums for an artist.

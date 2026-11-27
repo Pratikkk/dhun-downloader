@@ -618,7 +618,7 @@ class JiosaavnDownloader {
     }
 
     await directory.create(recursive: true);
-    final audioUrl = await api.getCdnUrl(encrypted.toString());
+    final audioUrl = await api.getCdnUrl(encrypted.toString(), quality: config.quality);
 
     // Prefetch cover and lyrics in parallel with download.
     final coverFuture = _fetchCover(song, directory);
