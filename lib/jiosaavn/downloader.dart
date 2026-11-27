@@ -60,7 +60,17 @@ class JiosaavnDownloader {
     required this.api,
     required this.config,
     Directory? outputDir,
+    this.debug = false,
   }) : outputDir = outputDir ?? Directory(config.output);
+
+  /// Enable/disable debug logging.
+  final bool debug;
+
+  void _log(String message) {
+    if (debug) {
+      print('[JiosaavnDownloader] $message');
+    }
+  }
 
   /// Create a downloader with default config.
   factory JiosaavnDownloader.withDefaults() {
@@ -77,6 +87,7 @@ class JiosaavnDownloader {
       cacheTtl: 86400,
       prefetchRate: 5.0,
       prefetchBurst: 3,
+      debug: true, // Enable API debug by default
     );
     return JiosaavnDownloader(api: api, config: const DownloadConfig());
   }
@@ -117,15 +128,18 @@ class JiosaavnDownloader {
     bool isPlaylist = false,
     Map<String, dynamic>? songData,
   }) async {
+    _log('Processing track: $songId (pos: $songPos/$totalTracks, playlist: $isPlaylist)');
     Map<String, dynamic> song;
     if (songData != null &&
         songData.containsKey('song') &&
         songData.containsKey('encrypted_media_url')) {
       song = Map<String, dynamic>.from(songData);
+      _log('Using provided song data: ${song['song']}');
     } else {
       final metadata = await api.metadata('song', songId);
       if (metadata.containsKey('song')) {
         song = Map<String, dynamic>.from(metadata['song'] as Map);
+        _log('Fetched metadata for song: ${song['song']}');
       } else {
         final candidates = metadata['songs'];
         if (candidates is! List) {
@@ -258,6 +272,7 @@ class JiosaavnDownloader {
 
   /// Process a collection (album or playlist).
   Future<void> processCollection(String kind, String token) async {
+    _log('Processing collection: $kind/$token');
     if (kind != 'album' && kind != 'playlist') {
       throw DownloadError(
         'Unsupported collection kind: $kind. Expected "album" or "playlist".',
@@ -285,6 +300,7 @@ class JiosaavnDownloader {
     for (final item in songsRaw) {
       if (item is Map) songs.add(Map<String, dynamic>.from(item));
     }
+    _log('Collection metadata fetched: $effectiveName (${songs.length} tracks, reported: $reportedTotal)');
 
     // Handle playlist pagination.
     if (kind == 'playlist' && reportedTotal > songs.length) {
@@ -292,6 +308,7 @@ class JiosaavnDownloader {
       final maxPages = (reportedTotal + pageSize - 1) ~/ pageSize;
       final pageSignatures = <String>{_pageSignature(songs)};
       for (var page = 2; page <= maxPages; page++) {
+        _log('Fetching playlist page $page/$maxPages');
         final pageData = await api.metadata(kind, token, page: page);
         final pageSongsRaw = pageData['songs'];
         if (pageSongsRaw == null ||
@@ -365,16 +382,22 @@ class JiosaavnDownloader {
 
   /// Process an artist's albums.
   Future<void> processArtist(String artistId) async {
+    _log('Processing artist: $artistId');
     var page = 1;
     final allAlbums = <Map<String, dynamic>>[];
 
     while (true) {
+      _log('Fetching artist albums page $page');
       final data = await api.artistAlbums(artistId, page: page);
       final albumsRaw = data['albums'];
-      if (albumsRaw == null || albumsRaw is! List || albumsRaw.isEmpty) break;
+      if (albumsRaw == null || albumsRaw is! List || albumsRaw.isEmpty) {
+        _log('No more albums found for artist');
+        break;
+      }
       for (final item in albumsRaw) {
         if (item is Map) allAlbums.add(Map<String, dynamic>.from(item));
       }
+      _log('Page $page: found ${albumsRaw.length} albums (total: ${allAlbums.length})');
       if (albumsRaw.length < collectionPageSize) break;
       page++;
     }
@@ -388,6 +411,7 @@ class JiosaavnDownloader {
         );
     final effectiveArtistName = artistName.isNotEmpty ? artistName : 'Unknown Artist';
     _status('Artist: $effectiveArtistName (${allAlbums.length} albums)');
+    _log('Processing ${allAlbums.length} albums for artist: $effectiveArtistName');
 
     final workers = config.workers.clamp(1, maxWorkers);
     try {
@@ -756,6 +780,7 @@ class JiosaavnDownloader {
     int songPos,
     int totalTracks,
   ) async {
+    _log('Fetching track: ${song['song']} ($trackId)');
     final encrypted = song['encrypted_media_url'];
     if (encrypted == null || encrypted.toString().isEmpty) {
       throw DownloadError(
@@ -764,10 +789,12 @@ class JiosaavnDownloader {
     }
 
     await directory.create(recursive: true);
+    _log('Getting CDN URL for track (quality: ${config.quality})');
     final audioUrl = await api.getCdnUrl(
       encrypted.toString(),
       quality: config.quality,
     );
+    _log('CDN URL obtained: ${audioUrl.substring(0, 60)}...');
 
     // Prefetch cover and lyrics in parallel with download.
     final coverFuture = _fetchCover(song, directory);
@@ -777,16 +804,19 @@ class JiosaavnDownloader {
     var offset = 0;
     if (await partial.exists()) {
       offset = await partial.length();
+      _log('Resuming download from offset: $offset');
     }
 
     http.StreamedResponse response = await _sendDownloadRequest(audioUrl, offset);
     if (response.statusCode == 416 && offset > 0) {
+      _log('Range request failed (416), restarting from beginning');
       await partial.delete();
       offset = 0;
       response = await _sendDownloadRequest(audioUrl, 0);
     } else if (response.statusCode == 416) {
       throw DownloadError('The server rejected the download range.');
     }
+    _log('Download started: status=${response.statusCode}, content-type=${response.headers['content-type']}');
 
     final contentType = response.headers['content-type'] ?? '';
     if (contentType.contains('text/') || contentType.contains('json')) {

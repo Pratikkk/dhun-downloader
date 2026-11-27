@@ -16,6 +16,7 @@ class JiosaavnApi {
   final bool cache;
   final int cacheTtl;
   final RateLimiter prefetchLimiter;
+  final bool debug;
 
   // In-memory caches.
   final Map<String, dynamic> _metadataCache = {};
@@ -30,7 +31,14 @@ class JiosaavnApi {
     this.cacheTtl = 86400,
     double prefetchRate = 5.0,
     int prefetchBurst = 3,
+    this.debug = false,
   }) : prefetchLimiter = RateLimiter(rate: prefetchRate, burst: prefetchBurst);
+
+  void _log(String message) {
+    if (debug) {
+      print('[JiosaavnApi] $message');
+    }
+  }
 
   /// Call the JioSaavn web API with the given `__call` and parameters.
   Future<Map<String, dynamic>> api(String call, {Map<String, dynamic>? params}) async {
@@ -42,7 +50,9 @@ class JiosaavnApi {
       ...?params,
     };
     final uri = Uri.parse(apiUrl).replace(queryParameters: queryParams.map((k, v) => MapEntry(k, v.toString())));
+    _log('API Request: $call -> $uri');
     final response = await client.get(uri, timeout: Duration(seconds: timeoutSeconds));
+    _log('API Response: $call -> Status: ${response.statusCode}, Body length: ${response.body.length}');
 
     // Parse JSON, handling callback-wrapped responses.
     final text = response.body.trim();
@@ -101,9 +111,11 @@ class JiosaavnApi {
   Future<Map<String, dynamic>> metadata(String kind, String token, {int? page}) async {
     final cacheKey = '$kind|$token|${page ?? 0}';
     if (_metadataCache.containsKey(cacheKey)) {
+      _log('Metadata cache hit: $kind/$token');
       return Map<String, dynamic>.from(_metadataCache[cacheKey] as Map);
     }
 
+    _log('Fetching metadata: $kind/$token (page: ${page ?? 1})');
     final params = <String, dynamic>{
       'token': token,
       'type': kind,
@@ -113,6 +125,7 @@ class JiosaavnApi {
 
     final data = await api('webapi.get', params: params);
     _metadataCache[cacheKey] = data;
+    _log('Metadata fetched: $kind/$token -> ${data['songs']?.length ?? 0} songs');
     return data;
   }
 
@@ -126,6 +139,7 @@ class JiosaavnApi {
       throw DownloadError('Search result limit must be between 1 and 50.');
     }
 
+    _log('Searching: "$query" (limit: $limit)');
     final data = await api('search.getResults', params: {
       'q': query,
       'p': 1,
@@ -188,10 +202,12 @@ class JiosaavnApi {
 
     final cacheKey = '$encUrl|${ordered.join(',')}';
     if (_cdnUrlCache.containsKey(cacheKey)) {
+      _log('CDN URL cache hit: ${encUrl.substring(0, 20)}...');
       final cached = _cdnUrlCache[cacheKey] as Map;
       return cached['url'] as String;
     }
 
+    _log('Fetching CDN URL: quality=$requestedQuality, fallback=$fallbackQualities');
     String? lastError;
     for (final q in ordered) {
       try {
@@ -221,6 +237,7 @@ class JiosaavnApi {
         final resolved = uri.replace(host: host).toString();
 
         _cdnUrlCache[cacheKey] = {'url': resolved, 'quality': q};
+        _log('CDN URL resolved: quality=$q -> ${resolved.substring(0, 50)}...');
         return resolved;
       } on DownloadError catch (exc) {
         lastError = exc.message;
@@ -237,14 +254,18 @@ class JiosaavnApi {
 
   /// Fetch all albums for an artist.
   Future<Map<String, dynamic>> artistAlbums(String artistId, {int page = 1, int limit = collectionPageSize}) async {
+    _log('Fetching artist albums: $artistId (page: $page, limit: $limit)');
     try {
-      return await api('artist.getAlbums', params: {
+      final result = await api('artist.getAlbums', params: {
         'artist_id': artistId,
         'p': page,
         'n': limit,
       });
+      _log('Artist albums fetched: ${result['albums']?.length ?? 0} albums');
+      return result;
     } on DownloadError {
       // Fallback: search for songs by artist_id/name, extract unique album URLs.
+      _log('Falling back to search for artist albums: $artistId');
       final searchLimit = (limit * 5).clamp(0, 100);
       final data = await api('search.getResults', params: {
         'q': artistId,
@@ -278,6 +299,7 @@ class JiosaavnApi {
           if (albums.length >= limit) break;
         }
       }
+      _log('Fallback search found ${albums.length} albums');
       return {'albums': albums, 'artist_name': artistId};
     }
   }
@@ -305,11 +327,14 @@ class JiosaavnApi {
   Future<List<String?>> fetchLyrics(String lyricsId) async {
     // Check cache first.
     if (_lyricsCache.containsKey(lyricsId)) {
+      _log('Lyrics cache hit: $lyricsId');
       return List<String?>.from(_lyricsCache[lyricsId]!);
     }
 
+    _log('Fetching lyrics: $lyricsId');
     // Rate limit the API request.
     if (!await acquirePrefetch(prefetchLimiter)) {
+      _log('Lyrics fetch rate limited: $lyricsId');
       _lyricsCache[lyricsId] = [null, null];
       return [null, null];
     }
@@ -329,8 +354,10 @@ class JiosaavnApi {
         }
       }
       _lyricsCache[lyricsId] = [lrcText, finalPlain];
+      _log('Lyrics fetched: $lyricsId -> lrc: ${lrcText != null}, plain: ${finalPlain != null}');
       return [lrcText, finalPlain];
     } catch (exc) {
+      _log('Lyrics fetch failed: $lyricsId -> $exc');
       _lyricsCache[lyricsId] = [null, null];
       return [null, null];
     }
@@ -339,16 +366,25 @@ class JiosaavnApi {
   /// Fetch cover art bytes for a track.
   Future<List<int>?> fetchCover(String coverUrl) async {
     if (_coverCache.containsKey(coverUrl)) {
+      _log('Cover cache hit: ${coverUrl.substring(0, 50)}...');
       return List<int>.from(_coverCache[coverUrl] as List);
     }
 
-    if (!await acquirePrefetch(prefetchLimiter)) return null;
+    _log('Fetching cover: $coverUrl');
+    if (!await acquirePrefetch(prefetchLimiter)) {
+      _log('Cover fetch rate limited');
+      return null;
+    }
 
     try {
       final response = await client.get(Uri.parse(coverUrl), timeout: Duration(seconds: timeoutSeconds));
       final bytes = response.bodyBytes;
-      if (!(_isJpeg(bytes) || _isPng(bytes))) return null;
+      if (!(_isJpeg(bytes) || _isPng(bytes))) {
+        _log('Cover fetch failed: invalid image format');
+        return null;
+      }
       _coverCache[coverUrl] = bytes;
+      _log('Cover fetched: ${bytes.length} bytes');
       return bytes;
     } catch (_) {
       return null;
