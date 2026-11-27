@@ -3,8 +3,6 @@
 /// Ported from the Python `Jiosaavn` class: `api()`, `metadata()`, `search()`,
 /// `getCdnURL()`, `artist_albums()`, and related methods.
 
-library jiosaavn.api;
-
 import 'dart:convert';
 
 import 'client.dart';
