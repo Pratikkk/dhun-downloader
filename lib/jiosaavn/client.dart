@@ -19,8 +19,8 @@ class RateLimiter {
   final Object _lock = Object();
 
   RateLimiter({this.rate = 10.0, this.burst = 5})
-      : tokens = burst.toDouble(),
-        _lastUpdate = DateTime.now();
+    : tokens = burst.toDouble(),
+      _lastUpdate = DateTime.now();
 
   /// Acquire `tokens` from the bucket. Returns `true` if acquired, `false` on timeout.
   Future<bool> acquire({int tokensNeeded = 1, Duration? timeout}) async {
@@ -29,25 +29,30 @@ class RateLimiter {
       final now = DateTime.now();
       final elapsed = now.difference(_lastUpdate).inMicroseconds / 1e6;
       synchronized(() {
-        this.tokens = (this.tokens + elapsed * rate).clamp(0.0, burst.toDouble());
+        tokens = (tokens + elapsed * rate).clamp(0.0, burst.toDouble());
         _lastUpdate = now;
       });
       final currentTokens = synchronized(() => tokens);
       if (currentTokens >= tokensNeeded) {
         synchronized(() {
-          this.tokens -= tokensNeeded;
+          tokens -= tokensNeeded;
         });
         return true;
       }
       if (timeout != null) {
         final needed = tokensNeeded - currentTokens;
         final waitTime = needed / rate;
-        if (deadline != null && DateTime.now().add(Duration(seconds: waitTime.toInt())).isAfter(deadline!)) {
+        if (deadline != null &&
+            DateTime.now()
+                .add(Duration(seconds: waitTime.toInt()))
+                .isAfter(deadline!)) {
           return false;
         }
       } else {
         final waitTime = tokensNeeded / rate;
-        await Future.delayed(Duration(milliseconds: (waitTime * 1000).clamp(0, 100).toInt()));
+        await Future.delayed(
+          Duration(milliseconds: (waitTime * 1000).clamp(0, 100).toInt()),
+        );
         continue;
       }
       await Future.delayed(const Duration(milliseconds: 50));
@@ -97,7 +102,8 @@ class JiosaavnClient {
   /// Default headers sent with every request.
   Map<String, String> get defaultHeaders {
     return {
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+      'User-Agent':
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
           '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'en-US,en;q=0.9',
@@ -122,16 +128,23 @@ class JiosaavnClient {
           ..headers.addAll(requestHeaders);
         if (stream) {
           // Streaming response - return the full response after reading.
-          final response = await _client.send(request).timeout(effectiveTimeout);
+          final response = await _client
+              .send(request)
+              .timeout(effectiveTimeout);
           return http.Response.fromStream(response);
         }
-        final response = await _client.get(uri, headers: requestHeaders).timeout(effectiveTimeout);
+        final response = await _client
+            .get(uri, headers: requestHeaders)
+            .timeout(effectiveTimeout);
         if (response.statusCode >= 400) {
-          if (_shouldRetry(response.statusCode) && attempts <= retryPolicy.total) {
+          if (_shouldRetry(response.statusCode) &&
+              attempts <= retryPolicy.total) {
             await _backoff(attempts);
             continue;
           }
-          throw DownloadError('Request failed with status ${response.statusCode}');
+          throw DownloadError(
+            'Request failed with status ${response.statusCode}',
+          );
         }
         return response;
       } on DownloadError {
@@ -180,6 +193,9 @@ class JiosaavnClient {
 }
 
 /// Acquire a permit from the prefetch rate limiter, with a timeout.
-Future<bool> acquirePrefetch(RateLimiter limiter, {Duration timeout = const Duration(seconds: 30)}) {
+Future<bool> acquirePrefetch(
+  RateLimiter limiter, {
+  Duration timeout = const Duration(seconds: 30),
+}) {
   return limiter.acquire(timeout: timeout);
 }

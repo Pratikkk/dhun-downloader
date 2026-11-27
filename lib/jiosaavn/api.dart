@@ -5,8 +5,6 @@
 
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
-
 import 'client.dart';
 import 'models.dart';
 import 'utils.dart';
@@ -74,8 +72,9 @@ class JiosaavnApi {
           continue;
         }
         if (!inString) {
-          if (ch == '{') depth++;
-          else if (ch == '}') {
+          if (ch == '{') {
+            depth++;
+          } else if (ch == '}') {
             depth--;
             if (depth == 0) {
               end = i;
@@ -88,10 +87,10 @@ class JiosaavnApi {
       data = jsonDecode(text.substring(start, end + 1));
     }
 
-    if (data == null || data is! Map || (data as Map).isEmpty) {
+    if (data == null || data is! Map || data.isEmpty) {
       throw DownloadError('JioSaavn returned no data for this item.');
     }
-    final dataMap = Map<String, dynamic>.from(data as Map);
+    final dataMap = Map<String, dynamic>.from(data);
     if (dataMap.containsKey('error') && dataMap['error'] != null) {
       throw DownloadError('JioSaavn: ${dataMap['error']}');
     }
@@ -182,7 +181,9 @@ class JiosaavnApi {
     }
     addQuality(requestedQuality);
     if (fallbackQualities != null) {
-      for (final q in fallbackQualities) addQuality(q);
+      for (final q in fallbackQualities) {
+        addQuality(q);
+      }
     }
 
     final cacheKey = '$encUrl|${ordered.join(',')}';
