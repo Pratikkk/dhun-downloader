@@ -1050,6 +1050,22 @@ class JiosaavnDownloader {
       _status('  Warning: tagging failed: ${tagResult.error}');
     }
 
+    // Write sidecar JSON with ALL available metadata.
+    final sidecarResult = await writeSidecarJson(
+      audioFilePath: destination.path,
+      song: songWithLyrics,
+      albumArtist: albumArtist ?? '',
+      trackPos: songPos,
+      totalTracks: totalTracks,
+      songId: songId,
+      artworkBytes: artwork,
+    );
+    if (sidecarResult == null) {
+      _status('  Warning: could not write sidecar metadata file.');
+    } else {
+      _status('  Saved metadata sidecar: ${p.basename(sidecarResult)}', verbose: true);
+    }
+
     await partial.rename(destination.path);
     await _discardPartials(destination);
 

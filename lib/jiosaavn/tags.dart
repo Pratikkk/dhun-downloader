@@ -13,7 +13,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'models.dart';
 import 'utils.dart';
 
 /// MP4 cover art format.
@@ -300,7 +299,7 @@ Future<TagResult> tagMp4({
       newMetadataAtoms.add(stringAtom('\xa9nam', title));
     }
 
-    // Album
+    // Album / Release Title
     final album = cleanText(song['album'] ?? '');
     if (album.isNotEmpty) {
       newMetadataAtoms.add(stringAtom('\xa9alb', album));
@@ -313,13 +312,20 @@ Future<TagResult> tagMp4({
       newMetadataAtoms.add(stringAtom('\xa9ART', artists));
     }
 
-    // Year / release date
+    // Album Artist
+    final albumArtistValue =
+        cleanText(song['album_artist'] ?? song['primary_artists'] ?? '');
+    if (albumArtistValue.isNotEmpty && albumArtistValue != artists) {
+      newMetadataAtoms.add(itunesAtom('Album Artist', utf8.encode(albumArtistValue)));
+    }
+
+    // Year / Release Date
     final release = normalizeDate(song['release_date'] ?? song['year']);
     if (release != null && release.isNotEmpty) {
       newMetadataAtoms.add(stringAtom('\xa9day', release));
     }
 
-    // Genre
+    // Genre / Subgenre
     final genre = trackGenres(Map<String, dynamic>.from(song));
     if (genre.isNotEmpty) {
       newMetadataAtoms.add(stringAtom('\xa9gen', genre.join('; ')));
@@ -327,6 +333,17 @@ Future<TagResult> tagMp4({
 
     // Track number
     newMetadataAtoms.add(trknAtom(trackPos, totalTracks));
+
+    // Disc number
+    final discNumber = song['disc_number'] ?? song['disc'];
+    final totalDiscs = song['total_discs'];
+    if (discNumber != null && discNumber != '' && discNumber != 0) {
+      final discNum = discNumber is int ? discNumber : int.tryParse(discNumber.toString()) ?? 1;
+      final total = totalDiscs != null && totalDiscs != '' && totalDiscs != 0
+          ? (totalDiscs is int ? totalDiscs : int.tryParse(totalDiscs.toString()) ?? 1)
+          : 1;
+      newMetadataAtoms.add(diskAtom(discNum, total));
+    }
 
     // Explicit rating
     final explicit = isTrue(song['explicit_content']);
@@ -338,13 +355,14 @@ Future<TagResult> tagMp4({
       newMetadataAtoms.add(itunesAtom('JioSaavn ID', utf8.encode(id)));
     }
 
-    // Composers
+    // Composers / Songwriters
     final composers =
         metadataList(Map<String, dynamic>.from(song), ['music', 'composer', 'composers', 'music_by']);
     if (composers.isNotEmpty) {
       final composerStr = composers.join(', ');
       newMetadataAtoms.add(stringAtom('\xa9wrt', composerStr));
       newMetadataAtoms.add(itunesAtom('COMPOSER', utf8.encode(composerStr)));
+      newMetadataAtoms.add(itunesAtom('Songwriter', utf8.encode(composerStr)));
     }
 
     // Lyricists
@@ -375,11 +393,18 @@ Future<TagResult> tagMp4({
       newMetadataAtoms.add(itunesAtom('Starring', utf8.encode(starring.join(', '))));
     }
 
-    // Record label
+    // Record label / Publisher
     final labelValues =
-        metadataList(Map<String, dynamic>.from(song), ['label', 'label_name', 'record_label']);
+        metadataList(Map<String, dynamic>.from(song), ['label', 'label_name', 'record_label', 'publisher']);
     if (labelValues.isNotEmpty) {
       newMetadataAtoms.add(itunesAtom('Record label', utf8.encode(labelValues.join(', '))));
+      newMetadataAtoms.add(itunesAtom('Publisher', utf8.encode(labelValues.join(', '))));
+    }
+
+    // Copyright
+    final copyright = cleanText(song['copyright_text'] ?? '');
+    if (copyright.isNotEmpty) {
+      newMetadataAtoms.add(stringAtom('cprt', copyright));
     }
 
     // Language
@@ -393,6 +418,21 @@ Future<TagResult> tagMp4({
     final isrc = cleanText(song['isrc'] ?? '');
     if (isrc.isNotEmpty) {
       newMetadataAtoms.add(itunesAtom('ISRC', utf8.encode(isrc)));
+    }
+
+    // Duration (in seconds)
+    final duration = song['duration'];
+    if (duration != null && duration != 0) {
+      final dur = duration is int ? duration : int.tryParse(duration.toString()) ?? 0;
+      if (dur > 0) {
+        newMetadataAtoms.add(itunesAtom('Duration', utf8.encode(dur.toString())));
+      }
+    }
+
+    // Compilation flag
+    final compilation = song['compilation'] ?? song['is_compilation'];
+    if (isTrue(compilation)) {
+      newMetadataAtoms.add(cpilAtom());
     }
 
     // Lyrics
@@ -602,6 +642,93 @@ Future<String?> readJioSaavnId(String filePath) async {
     }
     return null;
   } catch (_) {
+    return null;
+  }
+}
+
+/// Write a sidecar JSON file next to the audio file containing ALL available
+/// metadata, including fields that cannot be stored in MP4 atoms
+/// (e.g. BPM, Musical Key, Mood/Tags, ISWC, UPC/EAN, Producer).
+///
+/// Returns the path to the written JSON file, or null on failure.
+Future<String?> writeSidecarJson({
+  required String audioFilePath,
+  required Map<String, dynamic> song,
+  String albumArtist = '',
+  int trackPos = 1,
+  int totalTracks = 1,
+  String? songId,
+  List<int>? artworkBytes,
+}) async {
+  try {
+    final audioFile = File(audioFilePath);
+    if (!await audioFile.exists()) return null;
+
+    final sidecarPath = audioFilePath.replaceFirst(RegExp(r'\.m4a$'), '.json');
+    final sidecarFile = File(sidecarPath);
+
+    final explicit = isTrue(song['explicit_content']);
+    final hasLyrics = isTrue(song['has_lyrics']) && song['id'] != null;
+    final duration = song['duration'];
+    final dur = duration is int ? duration : int.tryParse(duration.toString()) ?? 0;
+    final discNumber = song['disc_number'] ?? song['disc'];
+    final discNum = discNumber != null && discNumber != '' && discNumber != 0
+        ? (discNumber is int ? discNumber : int.tryParse(discNumber.toString()) ?? 1)
+        : null;
+
+    final coverUrl = song['image'] as String?;
+    final highResCover = coverUrl != null ? coverUrl.replaceAll('150x150', '500x500') : null;
+
+    final metadata = {
+      // Core identification
+      'title': cleanText(song['song'] ?? song['title'] ?? ''),
+      'artist': cleanText(albumArtist.isNotEmpty ? albumArtist : song['primary_artists'] ?? ''),
+      'featured_artist': metadataList(Map<String, dynamic>.from(song), ['featured_artists']).join(', '),
+      'album_release_title': cleanText(song['album'] ?? ''),
+      'album_artist': cleanText(song['album_artist'] ?? song['primary_artists'] ?? ''),
+      'track_number': trackPos,
+      'disc_number': discNum,
+      'release_year_date': normalizeDate(song['release_date'] ?? song['year']),
+      'genre_subgenre': trackGenres(Map<String, dynamic>.from(song)),
+      'composer_songwriter': metadataList(Map<String, dynamic>.from(song), ['music', 'composer', 'composers', 'music_by']).join(', '),
+      'lyricist': metadataList(Map<String, dynamic>.from(song), ['lyricist', 'lyricists', 'lyrics_by']).join(', '),
+      'producer': null, // Not available from JioSaavn API
+      'record_label': metadataList(Map<String, dynamic>.from(song), ['label', 'label_name', 'record_label', 'publisher']).join(', '),
+      'language': metadataList(Map<String, dynamic>.from(song), ['language']).join(', '),
+      'explicit_content': explicit ? 'Yes' : 'No',
+      'bpm_tempo': null, // Not available from JioSaavn API
+      'musical_key': null, // Not available from JioSaavn API
+      'mood_tags': null, // Not available from JioSaavn API
+      'isrc': cleanText(song['isrc'] ?? ''),
+      'iswc': null, // Not available from JioSaavn API
+      'upc_ean': null, // Not available from JioSaavn API
+      'copyright_publisher': cleanText(song['copyright_text'] ?? ''),
+      'duration_seconds': dur > 0 ? dur : null,
+
+      // Identifiers
+      'jiosaavn_id': cleanText(song['id'] ?? songId ?? ''),
+      'encrypted_media_url': song['encrypted_media_url'],
+      'encrypted_drm_media_url': song['encrypted_drm_media_url'],
+      'media_preview_url': song['media_preview_url'],
+      'perma_url': song['perma_url'],
+      'album_url': song['album_url'],
+
+      // Media info
+      'cover_url_high_res': highResCover,
+      'cover_embedded': artworkBytes != null && artworkBytes.isNotEmpty,
+      'has_lyrics': hasLyrics,
+
+      // Raw API data (for reference)
+      'raw_api_data': song,
+    };
+
+    await sidecarFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(metadata),
+      encoding: utf8,
+    );
+
+    return sidecarPath;
+  } catch (exc) {
     return null;
   }
 }

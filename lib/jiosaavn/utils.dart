@@ -369,7 +369,7 @@ String normalizedUrl(String url) {
       !(siteHosts.contains(host) || shortHosts.contains(host))) {
     throw DownloadError('Use a JioSaavn song, album, or playlist URL.');
   }
-  if (uri.userInfo.isNotEmpty || (uri.port != null && uri.port != 80 && uri.port != 443)) {
+  if (uri.userInfo.isNotEmpty || (uri.port != 80 && uri.port != 443)) {
     throw DownloadError('The URL contains unsupported credentials or a port.');
   }
   return u;

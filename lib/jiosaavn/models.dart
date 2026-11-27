@@ -3,11 +3,7 @@
 /// These mirror the Python `jiosaavn_core.py` metadata structures but are
 /// expressed as immutable Dart classes for use in a Flutter app.
 
-library jiosaavn.models;
-
-import 'package:collection/collection.dart';
-
-/// A single track returned by JioSaavn metadata/search APIs.
+/// Unescape HTML entities (e.g. `&amp;` -> `&`).
 class Song {
   final String id;
   final String title;
