@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 import 'client.dart';
 import 'models.dart';
+import 'native_metadata.dart';
 import 'tags.dart';
 import 'utils.dart';
 
@@ -1052,29 +1053,30 @@ class JiosaavnDownloader {
       statusText: 'Embedding metadata & cover…',
     );
 
-    final tagResult = await tagMp4(
-      filePath: partial.path,
+    await partial.rename(destination.path);
+    await _discardPartials(destination);
+
+    // Write metadata using native platform channel (AVFoundation on macOS)
+    final nativeResult = await NativeMetadataWriter.writeMetadata(
+      filePath: destination.path,
       song: songWithLyrics,
       albumArtist: albumArtist ?? '',
       trackPos: songPos,
       totalTracks: totalTracks,
-      artwork: artwork,
+      artworkBytes: artwork,
       songId: songId,
     );
 
-    _metadataEmbedded[songPos] = tagResult.success;
-    _metadataErrors[songPos] = tagResult.error;
+    _metadataEmbedded[songPos] = nativeResult.success;
+    _metadataErrors[songPos] = nativeResult.error;
 
-    if (!tagResult.success) {
-      _status('  Warning: MP4 tagging failed: ${tagResult.error}');
+    if (!nativeResult.success) {
+      _status('  Warning: Native metadata embedding failed: ${nativeResult.error}');
     } else {
-      _status('  MP4 metadata & cover embedded.', verbose: true);
+      _status('  MP4 metadata & cover embedded natively.', verbose: true);
     }
 
-    await partial.rename(destination.path);
-    await _discardPartials(destination);
-
-    // Write sidecar JSON with ALL available metadata (after rename so file exists).
+    // Write sidecar JSON with ALL available metadata (backup).
     final sidecarResult = await writeSidecarJson(
       audioFilePath: destination.path,
       song: songWithLyrics,

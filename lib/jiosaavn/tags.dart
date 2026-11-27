@@ -271,31 +271,7 @@ Uint8List _buildStco(int offset) {
   return _fullAtom('stco', 0, 0, Uint8List.fromList(data.buffer.asUint8List()));
 }
 
-/// Build an ilst (item list) atom - empty container for metadata.
-Uint8List _buildIlst() {
-  return atomHeader('ilst', 0);
-}
-
-/// Build a meta atom.
-Uint8List _buildMeta(List<int> ilstData) {
-  final data = <int>[];
-  data.addAll([0, 0, 0, 0]); // version + flags
-  data.addAll(utf8.encode('und')); // handler_type
-  data.addAll(ilstData);
-  return _fullAtom('meta', 0, 0, Uint8List.fromList(data));
-}
-
-/// Build an udta atom containing meta.
-Uint8List _buildUdta(List<int> metaData) {
-  return Uint8List.fromList([...atomHeader('udta', metaData.length), ...metaData]);
-}
-
-/// Build an mdat atom with the given data.
-Uint8List _buildMdat(List<int> data) {
-  return Uint8List.fromList([...atomHeader('mdat', data.length), ...data]);
-}
-
-/// Build a trak atom containing tkhd + mdia.
+/// Write an MP4 atom header: `[size(4, big-endian)][type(4)]`.
 Uint8List _buildTrak(int trackId, int duration, int timescale, int sampleRate,
     int channels, int mdatOffset, int aacSize) {
   final tkhd = _buildTkhd(trackId, duration);
