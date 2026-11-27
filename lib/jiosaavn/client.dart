@@ -1,7 +1,11 @@
-/// HTTP client wrapper with retry, rate limiting, and session management.
+/// HTTP client wrapper with retry, rate limiting, session management, and cookie persistence.
 ///
 /// Ported from the Python `Jiosaavn` class's `_configure_session`, `request`,
-/// and `RateLimiter` logic.
+/// and `RateLimiter` logic. Python's `requests.Session` persists cookies
+/// automatically; this Dart port maintains a simple cookie jar to match that
+/// behavior — JioSaavn's `song.generateAuthToken` endpoint requires cookies
+/// set by prior API calls (e.g., `webapi.get` metadata requests).
+
 library jiosaavn.client;
 
 import 'dart:async';
@@ -81,13 +85,16 @@ class RetryPolicy {
   });
 }
 
-/// An HTTP client with retry, rate limiting, and default headers.
+/// An HTTP client with retry, rate limiting, cookie persistence, and default headers.
 class JiosaavnClient {
   final http.Client _client;
   final int timeoutSeconds;
   final String? proxy;
   final RateLimiter prefetchLimiter;
   final RetryPolicy retryPolicy;
+
+  // Cookie jar — persists cookies across requests like requests.Session does.
+  final Map<String, String> _cookies = {};
 
   JiosaavnClient({
     http.Client? client,
@@ -112,9 +119,9 @@ class JiosaavnClient {
     return IOClient(httpClient);
   }
 
-  /// Default headers sent with every request.
+  /// Default headers sent with every request, including stored cookies.
   Map<String, String> get defaultHeaders {
-    return {
+    final headers = <String, String>{
       'User-Agent':
           'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
           '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -122,9 +129,38 @@ class JiosaavnClient {
       'Accept-Language': 'en-US,en;q=0.9',
       'Referer': 'https://www.jiosaavn.com/',
     };
+    if (_cookies.isNotEmpty) {
+      headers['Cookie'] = _cookies.entries
+          .map((e) => '${e.key}=${e.value}')
+          .join('; ');
+    }
+    return headers;
   }
 
-  /// Perform a GET request with retry logic.
+  /// Extract cookies from a response's `Set-Cookie` headers and store them.
+  void _storeCookies(http.Response response) {
+    final setCookie = response.headers['set-cookie'];
+    if (setCookie == null) return;
+    // Use regex to find cookie `name=value` pairs in Set-Cookie headers.
+    // Multiple Set-Cookie headers are joined by ", " in the http package,
+    // and cookie attributes (path, domain, expires, etc.) follow the value
+    // separated by ";". We match name=value where value stops at ; or ,
+    // skipping standard cookie attributes.
+    final cookieRegex = RegExp(r'\b([a-zA-Z0-9_.-]+)=([^;,]*)');
+    for (final match in cookieRegex.allMatches(setCookie)) {
+      final name = match.group(1)!;
+      final value = match.group(2)!.trim();
+      if (value.isEmpty) continue;
+      if (['path', 'domain', 'expires', 'max-age', 'secure', 'httponly',
+              'samesite', 'comment', 'version']
+          .contains(name.toLowerCase())) {
+        continue;
+      }
+      _cookies[name] = value;
+    }
+  }
+
+  /// Perform a GET request with retry logic and cookie persistence.
   Future<http.Response> get(
     Uri uri, {
     Map<String, String>? headers,
@@ -140,15 +176,27 @@ class JiosaavnClient {
         final request = http.Request('GET', uri)
           ..headers.addAll(requestHeaders);
         if (stream) {
-          // Streaming response - return the full response after reading.
           final response = await _client
               .send(request)
               .timeout(effectiveTimeout);
-          return await http.Response.fromStream(response);
+          final httpResponse = await http.Response.fromStream(response);
+          _storeCookies(httpResponse);
+          if (httpResponse.statusCode >= 400) {
+            if (_shouldRetry(httpResponse.statusCode) &&
+                attempts <= retryPolicy.total) {
+              await _backoff(attempts);
+              continue;
+            }
+            throw DownloadError(
+              'Request failed with status ${httpResponse.statusCode}',
+            );
+          }
+          return httpResponse;
         }
         final response = await _client
             .get(uri, headers: requestHeaders)
             .timeout(effectiveTimeout);
+        _storeCookies(response);
         if (response.statusCode >= 400) {
           if (_shouldRetry(response.statusCode) &&
               attempts <= retryPolicy.total) {
@@ -179,6 +227,10 @@ class JiosaavnClient {
   }
 
   /// Perform a GET request and return the response as a stream (for downloads).
+  ///
+  /// CDN download responses don't set cookies we need, so this simply forwards
+  /// the stream without buffering. Cookie persistence is handled by [get] for
+  /// API requests.
   Future<http.StreamedResponse> send(
     http.Request request, {
     Map<String, String>? headers,
@@ -187,38 +239,7 @@ class JiosaavnClient {
     final effectiveTimeout = timeout ?? Duration(seconds: timeoutSeconds);
     final requestHeaders = {...defaultHeaders, ...?headers};
     request.headers.addAll(requestHeaders);
-    int attempts = 0;
-    while (true) {
-      attempts++;
-      try {
-        final response = await _client.send(request).timeout(effectiveTimeout);
-        if (response.statusCode >= 400) {
-          if (_shouldRetry(response.statusCode) &&
-              attempts <= retryPolicy.total) {
-            await _backoff(attempts);
-            continue;
-          }
-          throw DownloadError(
-            'Download request failed with status ${response.statusCode}',
-          );
-        }
-        return response;
-      } on DownloadError {
-        rethrow;
-      } on TimeoutException {
-        if (attempts <= retryPolicy.total) {
-          await _backoff(attempts);
-          continue;
-        }
-        throw DownloadError('Download request timed out after $attempts attempts');
-      } catch (exc) {
-        if (attempts <= retryPolicy.total) {
-          await _backoff(attempts);
-          continue;
-        }
-        throw DownloadError('Download request failed: $exc');
-      }
-    }
+    return _client.send(request).timeout(effectiveTimeout);
   }
 
   Future<void> _backoff(int attempt) async {

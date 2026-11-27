@@ -225,14 +225,15 @@ class JiosaavnApi {
           'bitrate': q,
           'api_version': '4',
         });
-        var authUrl = data['auth_url'];
-        if (authUrl == null || authUrl.toString().isEmpty) {
-          throw DownloadError('No audio URL is available for this track.');
+        final authUrl = data['auth_url'];
+        // JioSaavn may return `auth_url: false` (boolean) when no URL is available.
+        if (authUrl == null ||
+            authUrl is bool ||
+            authUrl.toString().isEmpty ||
+            !authUrl.toString().startsWith('http')) {
+          throw DownloadError('No audio URL is available for this track at $q kbps.');
         }
         final urlStr = authUrl.toString();
-        if (!urlStr.startsWith('http')) {
-          throw DownloadError('No audio URL is available for this track.');
-        }
 
         // The web endpoint sometimes returns its web stream instead of AAC.
         // Known host patterns: web.* -> aac.*

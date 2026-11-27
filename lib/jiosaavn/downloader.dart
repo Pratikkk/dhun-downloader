@@ -783,19 +783,50 @@ class JiosaavnDownloader {
   ) async {
     _log('Fetching track: ${song['song']} ($trackId)');
     final encrypted = song['encrypted_media_url'];
-    if (encrypted == null || encrypted.toString().isEmpty) {
+    final encryptedDrm = song['encrypted_drm_media_url'];
+    if ((encrypted == null || encrypted.toString().isEmpty) &&
+        (encryptedDrm == null || encryptedDrm.toString().isEmpty)) {
       throw DownloadError(
         'Audio is unavailable for this track (it may be restricted in your region).',
       );
     }
 
     await directory.create(recursive: true);
-    _log('Getting CDN URL for track (quality: ${config.quality})');
-    final audioUrl = await api.getCdnUrl(
-      encrypted.toString(),
-      quality: config.quality,
-    );
-    _log('CDN URL obtained: ${audioUrl.substring(0, 60)}...');
+
+    // Try encrypted_media_url first, then encrypted_drm_media_url as fallback.
+    String? audioUrl;
+    String? lastCdnError;
+    for (final encUrl in [encrypted, encryptedDrm]) {
+      if (encUrl == null || encUrl.toString().isEmpty) continue;
+      _log('Getting CDN URL for track (source: ${encUrl == encryptedDrm ? "drm" : "media"}, quality: ${config.quality})');
+      try {
+        audioUrl = await api.getCdnUrl(
+          encUrl.toString(),
+          quality: config.quality,
+        );
+        _log('CDN URL obtained: ${audioUrl.substring(0, 60)}...');
+        break;
+      } on DownloadError catch (e) {
+        lastCdnError = e.message;
+        _log('CDN URL failed for ${encUrl == encryptedDrm ? "drm" : "media"} URL: $lastCdnError');
+        continue;
+      }
+    }
+
+    // Last resort: try media_preview_url (direct MP4, no auth token needed).
+    if (audioUrl == null) {
+      final previewUrl = song['media_preview_url'];
+      if (previewUrl != null && previewUrl.toString().isNotEmpty && previewUrl.toString().startsWith('http')) {
+        _log('Trying media preview URL as fallback');
+        audioUrl = previewUrl.toString();
+      }
+    }
+
+    if (audioUrl == null) {
+      throw DownloadError(
+        'No audio URL available for this track. Last error: ${lastCdnError ?? 'unknown'}',
+      );
+    }
 
     // Prefetch cover and lyrics in parallel with download.
     final coverFuture = _fetchCover(song, directory);
