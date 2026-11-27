@@ -4,6 +4,8 @@
 /// `processTrack`, `process_collection`, `download_file`, `_fetch_track`,
 /// `_fetch_cover`, `_prefetch_lyrics`, `_template_folder`, etc.
 
+library jiosaavn.downloader;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
