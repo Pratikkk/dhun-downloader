@@ -2,6 +2,7 @@
 ///
 /// Ported from the Python `Jiosaavn` class's `_configure_session`, `request`,
 /// and `RateLimiter` logic.
+library;
 
 import 'dart:async';
 import 'dart:io';
@@ -131,7 +132,7 @@ class JiosaavnClient {
           final response = await _client
               .send(request)
               .timeout(effectiveTimeout);
-          return http.Response.fromStream(response);
+          return await http.Response.fromStream(response);
         }
         final response = await _client
             .get(uri, headers: requestHeaders)
