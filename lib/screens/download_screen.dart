@@ -5,6 +5,7 @@
 
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -29,6 +30,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   JiosaavnDownloader? _downloader;
   bool _isDownloading = false;
   bool _isSearching = false;
+  Directory? _outputDir;
 
   List<SearchResult> _searchResults = [];
   List<DownloadProgress> _progressList = [];
@@ -61,15 +63,21 @@ class _DownloadScreenState extends State<DownloadScreen> {
       prefetchBurst: config.prefetchBurst,
     );
 
-    // Resolve output directory using path_provider for sandbox compatibility.
-    // Application documents directory is always writable within the macOS
-    // app sandbox; downloads directory may not be.
+    // Resolve output directory: use saved path from config, or fall back to
+    // app documents directory.
     Directory outputDir;
-    try {
+    final savedOutput = config.output;
+    if (savedOutput.isNotEmpty) {
+      final savedDir = Directory(savedOutput);
+      if (await savedDir.exists()) {
+        outputDir = savedDir;
+      } else {
+        outputDir = await getApplicationDocumentsDirectory();
+      }
+    } else {
       outputDir = await getApplicationDocumentsDirectory();
-    } catch (_) {
-      outputDir = Directory.current;
     }
+    _outputDir = outputDir;
 
     if (!mounted) return;
     setState(() {
@@ -82,6 +90,56 @@ class _DownloadScreenState extends State<DownloadScreen> {
         ..onTrackFinished = _onTrackFinished
         ..onAllFinished = _onAllFinished;
     });
+  }
+
+  /// Let the user pick a folder where downloaded songs will be saved.
+  Future<void> _chooseOutputFolder() async {
+    final picked = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select Download Folder',
+    );
+    if (picked == null || picked.isEmpty) return; // user cancelled
+
+    final newDir = Directory(picked);
+    if (!await newDir.exists()) {
+      try {
+        await newDir.create(recursive: true);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cannot create folder: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+
+    // Save the chosen folder to config so it persists across restarts.
+    final config = await JiosaavnDownloader.loadConfig();
+    await JiosaavnDownloader.saveConfig(config.copyWith(output: picked));
+
+    // Recreate the downloader with the new output directory.
+    if (!mounted) return;
+    setState(() {
+      _outputDir = newDir;
+      _downloader = JiosaavnDownloader(
+        api: _downloader!.api,
+        config: config.copyWith(output: picked),
+        outputDir: newDir,
+      )
+        ..onProgress = _onProgress
+        ..onTrackFinished = _onTrackFinished
+        ..onAllFinished = _onAllFinished;
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Download folder set to: $picked'),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   void _onProgress(DownloadProgress progress) {
@@ -225,6 +283,44 @@ class _DownloadScreenState extends State<DownloadScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Output folder selection card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Download Location',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _outputDir?.path ?? 'Not set',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                              color: Colors.grey,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton.icon(
+                          onPressed: _isDownloading ? null : _chooseOutputFolder,
+                          icon: const Icon(Icons.folder_open),
+                          label: const Text('Choose Folder'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
