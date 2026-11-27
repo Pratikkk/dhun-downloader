@@ -60,6 +60,15 @@ class JiosaavnApi {
     try {
       data = jsonDecode(text);
     } on FormatException {
+      // Check if the response is HTML (error page) instead of JSON.
+      final lowerText = text.toLowerCase();
+      if (lowerText.startsWith('<html') ||
+          lowerText.contains('<!doctype html>') ||
+          lowerText.contains('<body')) {
+        throw DownloadError(
+          'JioSaavn returned an HTML error page instead of JSON. The API may be blocking this request. Status: ${response.statusCode}',
+        );
+      }
       // Extract first complete JSON object (handles wrapped responses).
       final start = text.indexOf('{');
       if (start < 0) throw DownloadError('No JSON object in response');

@@ -758,6 +758,7 @@ class JiosaavnDownloader {
           'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
           '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept': '*/*',
+      'Referer': 'https://www.jiosaavn.com/',
       if (offset > 0) 'Range': 'bytes=$offset-',
       if (offset > 0) 'Accept-Encoding': 'identity',
     });

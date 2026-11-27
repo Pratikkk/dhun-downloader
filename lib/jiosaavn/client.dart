@@ -187,7 +187,38 @@ class JiosaavnClient {
     final effectiveTimeout = timeout ?? Duration(seconds: timeoutSeconds);
     final requestHeaders = {...defaultHeaders, ...?headers};
     request.headers.addAll(requestHeaders);
-    return _client.send(request).timeout(effectiveTimeout);
+    int attempts = 0;
+    while (true) {
+      attempts++;
+      try {
+        final response = await _client.send(request).timeout(effectiveTimeout);
+        if (response.statusCode >= 400) {
+          if (_shouldRetry(response.statusCode) &&
+              attempts <= retryPolicy.total) {
+            await _backoff(attempts);
+            continue;
+          }
+          throw DownloadError(
+            'Download request failed with status ${response.statusCode}',
+          );
+        }
+        return response;
+      } on DownloadError {
+        rethrow;
+      } on TimeoutException {
+        if (attempts <= retryPolicy.total) {
+          await _backoff(attempts);
+          continue;
+        }
+        throw DownloadError('Download request timed out after $attempts attempts');
+      } catch (exc) {
+        if (attempts <= retryPolicy.total) {
+          await _backoff(attempts);
+          continue;
+        }
+        throw DownloadError('Download request failed: $exc');
+      }
+    }
   }
 
   Future<void> _backoff(int attempt) async {

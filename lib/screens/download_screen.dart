@@ -47,6 +47,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       timeoutSeconds: config.timeout,
       prefetchRate: config.prefetchRate,
       prefetchBurst: config.prefetchBurst,
+      badCertificateCallback: true, // Allow self-signed certs for compatibility on port 443
     );
     final api = JiosaavnApi(
       client: client,
