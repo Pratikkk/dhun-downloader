@@ -68,6 +68,7 @@ class JiosaavnDownloader {
       timeoutSeconds: 30,
       prefetchRate: 5.0,
       prefetchBurst: 3,
+      badCertificateCallback: true, // Allow self-signed certs for compatibility
     );
     final api = JiosaavnApi(
       client: client,

@@ -2,12 +2,13 @@
 ///
 /// Ported from the Python `Jiosaavn` class's `_configure_session`, `request`,
 /// and `RateLimiter` logic.
-library;
+library jiosaavn.client;
 
 import 'dart:async';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import 'utils.dart';
 
@@ -17,7 +18,6 @@ class RateLimiter {
   final int burst;
   double tokens;
   DateTime _lastUpdate;
-  final Object _lock = Object();
 
   RateLimiter({this.rate = 10.0, this.burst = 5})
     : tokens = burst.toDouble(),
@@ -46,7 +46,7 @@ class RateLimiter {
         if (deadline != null &&
             DateTime.now()
                 .add(Duration(seconds: waitTime.toInt()))
-                .isAfter(deadline!)) {
+                .isAfter(deadline)) {
           return false;
         }
       } else {
@@ -96,9 +96,21 @@ class JiosaavnClient {
     double prefetchRate = 5.0,
     int prefetchBurst = 3,
     RetryPolicy? retryPolicy,
-  }) : _client = client ?? http.Client(),
+    bool badCertificateCallback = false,
+  }) : _client = client ?? _createDefaultClient(proxy, badCertificateCallback),
        prefetchLimiter = RateLimiter(rate: prefetchRate, burst: prefetchBurst),
        retryPolicy = retryPolicy ?? RetryPolicy();
+
+  static http.Client _createDefaultClient(String? proxy, bool badCertificateCallback) {
+    final httpClient = HttpClient();
+    if (badCertificateCallback) {
+      httpClient.badCertificateCallback = (cert, host, port) => true;
+    }
+    if (proxy != null && proxy.isNotEmpty) {
+      httpClient.findProxy = (uri) => proxy;
+    }
+    return IOClient(httpClient);
+  }
 
   /// Default headers sent with every request.
   Map<String, String> get defaultHeaders {
